@@ -1,4 +1,5 @@
 lazy val scalacheck = "org.scalacheck" %% "scalacheck" % "1.13.5"
+lazy val shapeless = "com.chuusai" %% "shapeless" % "2.3.2"
 def scalaXmlDep(scalaV: String): List[ModuleID] =
   CrossVersion.partialVersion(scalaV) match {
     case Some((2, minor)) if minor <= 10 =>
@@ -68,10 +69,12 @@ lazy val root = (project in file("."))
 lazy val core = (project in file("core")).settings(
   name := "SBinary",
   relaxOldScala,
-  Fmpp.templateSettings,
   libraryDependencies += scalacheck % Test,
   libraryDependencies ++= scalaVersion(scalaXmlDep).value,
-  unmanagedResources in Compile += (baseDirectory map { _ / "LICENSE" }).value
+  libraryDependencies += shapeless,
+  unmanagedResources in Compile += (baseDirectory map { _ / "LICENSE" }).value,
+  scalaSource in Compile := baseDirectory(_ / "src").value,
+  scalaSource in Test := baseDirectory(_ / "test-src").value
 )
 
 lazy val treeExample = (project in (file("examples") / "bt"))

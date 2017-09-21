@@ -190,7 +190,7 @@ object FormatTests extends Properties("Formats") {
   implicit val eqFoo = allAreEqual[Foo]
 
   implicit val BazFormat: Format[Baz] = viaString(Baz)
-  implicit val BifFormat: Format[Bif] = asProduct2(Bif)(Bif.unapply(_).get)
+  implicit val BifFormat: Format[Bif] = asProduct(Bif)(Bif.unapply(_).get)
   implicit val FooFormat: Format[Foo] = asUnion[Foo](Bar, classOf[Baz], classOf[Bif])
 
   implicit val arbitraryFoo: Arbitrary[Foo] = Arbitrary[Foo](
@@ -211,7 +211,7 @@ object FormatTests extends Properties("Formats") {
     implicit val formatLeaf = asSingleton(Leaf());
 
     implicit val formatSplit: Format[Split] =
-      asProduct2((x: BinaryTree, y: BinaryTree) => Split(x, y))((s: Split) => (s.left, s.right));
+      asProduct((x: BinaryTree, y: BinaryTree) => Split(x, y))((s: Split) => (s.left, s.right));
     asUnion[BinaryTree](classOf[Leaf], classOf[Split]);
   })
 
@@ -235,6 +235,16 @@ object FormatTests extends Properties("Formats") {
   implicit val SomeEnumFormat = enumerationFormat[SomeEnum.Value](SomeEnum)
   implicit val SomeEnumEq = allAreEqual[SomeEnum.Value]
   implicit val SomeEnumArb = Arbitrary[SomeEnum.Value](oneOf(SomeEnum.items))
+
+  case class CaseClass(i: Int, s: String, b: Boolean)
+  implicit val eqCaseClass = allAreEqual[CaseClass];
+  implicit val arbitraryCaseClass = Arbitrary[CaseClass] {
+    for {
+      i <- arbitrary[Int]
+      s <- Gen.alphaNumStr
+      b <- arbitrary[Boolean]
+    } yield CaseClass(i, s, b)
+  }
 
   formatSpec[Boolean]("Boolean");
   formatSpec[Byte]("Byte");
@@ -298,4 +308,15 @@ object FormatTests extends Properties("Formats") {
   formatSpec[(BinaryTree, BinaryTree)]("(BinaryTree, BinaryTree)")
 
   formatSpec[SomeEnum.Value]("SomeEnum.Value")
+
+  formatSpec[CaseClass]("CaseClass")
+
+  val custom: Format[CaseClass] =
+    asProduct((i: Int, s: String) => CaseClass(-i, s, false))(
+      (c: CaseClass) => (c.i, c.s.toLowerCase))
+  property("custom format") = forAll { (x: CaseClass) =>
+    val converted = fromByteArray[CaseClass](toByteArray(x)(custom))(custom)
+    -x.i == converted.i && x.s.toLowerCase == converted.s && !converted.b
+  }
+
 }

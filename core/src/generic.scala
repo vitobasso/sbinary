@@ -21,7 +21,7 @@ trait Generic extends CoreProtocol{
     def reads(in : Input) = { val size = read[Int](in); build(size, (0 until size).map(i => read[T](in)).iterator) }
     def writes(out : Output, ts : S) = { write(out, size(ts)); foreach(ts)(write(out, _)); }
   }
-  /** 
+  /**
    * Format instance which encodes the collection by first writing the length
    * of the collection as an int, then writing the collection elements in order.
    */
@@ -53,7 +53,7 @@ trait Generic extends CoreProtocol{
     def reads(in : Input) = f(read[String](in));
     def writes(out : Output, t : T) = write(out, t.toString);
   }
-  
+
   /**
    * Trivial serialization. Writing is a no-op, reading always returns this instance.
    */
@@ -63,7 +63,7 @@ trait Generic extends CoreProtocol{
   }
 
   /**
-   * Serializes this via a bijection to some other type. 
+   * Serializes this via a bijection to some other type.
    */
   def wrap[S, T](to : S => T, from : T => S)(implicit bin : Format[T]) = new Format[S]{
     def reads(in : Input) = from(read[T](in));
@@ -82,7 +82,7 @@ trait Generic extends CoreProtocol{
 
   /**
    * Attaches a stamp to the data. This stamp is placed at the beginning of the format and may be used
-   * to verify the integrity of the data (e.g. a magic number for the data format version). 
+   * to verify the integrity of the data (e.g. a magic number for the data format version).
    */
   def withStamp[S, T](stamp : S)(binary : Format[T])(implicit binS : Format[S]) : Format[T] = new Format[T]{
     def reads(in : Input) = {
@@ -108,41 +108,36 @@ trait Generic extends CoreProtocol{
     def writes(out : Output, value : V) = write(out, value.id)
   }
 
-  <#list 2..9 as i> 
-  <#assign typeParams><#list 1..i as j>T${j}<#if i !=j>,</#if></#list></#assign>
-  /**
-   * Represents this type as ${i} consecutive binary blocks of type T1..T${i},
-   * relative to the specified way of decomposing and composing S as such.
-   */
-  def asProduct${i}[S, ${typeParams}](apply : (${typeParams}) => S)(unapply : S => Product${i}[${typeParams}])(implicit
-   <#list 1..i as j>
-      bin${j} : Format[T${j}] <#if i != j>,</#if>
-    </#list>) = new Format[S]{
-       def reads (in : Input) : S = apply(
-      <#list 1..i as j>
-         read[T${j}](in)<#if i != j>,</#if>
-      </#list>
-      )
+  import shapeless._
+  import shapeless.ops.function._
 
-      def writes(out : Output, s : S) = {
-        val product = unapply(s);
-        <#list 1..i as j>
-          write(out, product._${j});
-        </#list>;       
-      }
-    }  
-</#list>
+  /**
+    * @param assemble aggregates into the resulting [[R]] the parts read
+    * @param disassemble decomposes the [[R]] in parts before writing to the destination
+    * @tparam P a Product (tuple or case class) representing the disassembled parts.
+    * @tparam R the resulting type
+    * @tparam F same as [[P]] => [[R]]
+    */
+  def asProduct[F, P, R, L <: HList](assemble: F)(disassemble: R => P)(
+      implicit
+      gen: Generic.Aux[P, L],
+      fp: FnToProduct.Aux[F, L => R],
+      formatL: Format[L]): Format[R] = new Format[R] {
+    override def reads(in: Input): R = fp(assemble)(formatL.reads(in))
+    override def writes(out: Output, value: R): Unit =
+      formatL.writes(out, gen.to(disassemble(value)))
+  }
 
   case class Summand[T](clazz : Class[_], format : Format[T]);
   implicit def classToSummand[T](clazz : Class[T])(implicit bin : Format[T]) : Summand[T] = Summand[T](clazz, bin);
   implicit def formatToSummand[T](format : Format[T])(implicit mf : scala.reflect.Manifest[T]) : Summand[T] = Summand[T](mf.runtimeClass, format);
-  // This is a bit gross. 
+  // This is a bit gross.
   implicit def anyToSummand[T](t : T) = Summand[T](t.asInstanceOf[AnyRef].getClass, asSingleton(t))
 
   /**
-   * Uses a single tag byte to represent S as a union of subtypes. 
+   * Uses a single tag byte to represent S as a union of subtypes.
    */
-  def asUnion[S](summands : Summand[_ <: S]*) : Format[S] = 
+  def asUnion[S](summands : Summand[_ <: S]*) : Format[S] =
     if (summands.length >= 256) sys.error("Sums of 256 or more elements currently not supported");
     else
     new Format[S]{

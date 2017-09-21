@@ -3,8 +3,43 @@ package sbinary;
 import Operations._;
 import scala.collection._;
 import generic.CanBuildFrom
+import shapeless._
 
-trait BasicTypes extends CoreProtocol{
+/**
+  * Generates [[Format]]s any "product" (tuple or case class),
+  * provided there are implicit [[Format]]s for every composing element.
+  */
+trait ProductTypes {
+
+  implicit val formatHNil: Format[HNil] = new Format[HNil] {
+    override def reads(in: Input): HNil = HNil
+    override def writes(out: Output, value: HNil): Unit = ()
+  }
+
+  implicit def formatHList[Head, Tail <: HList](
+                                                 implicit formatHead: Lazy[Format[Head]],
+                                                 formatTail: Format[Tail]) =
+    new Format[Head :: Tail] {
+      override def reads(in: Input): Head :: Tail =
+        formatHead.value.reads(in) :: formatTail.reads(in)
+      override def writes(out: Output, value: Head :: Tail): Unit = {
+        formatHead.value.writes(out, value.head)
+        formatTail.writes(out, value.tail)
+      }
+    }
+
+  implicit def formatProduct[A, Gen <: HList](
+                                               implicit gen: Generic.Aux[A, Gen],
+                                               formatHList: Format[Gen]): Format[A] =
+    new Format[A] {
+      override def reads(in: Input): A = gen.from(formatHList.reads(in))
+      override def writes(out: Output, value: A): Unit =
+        formatHList.writes(out, gen.to(value))
+    }
+
+}
+
+trait BasicTypes extends CoreProtocol with ProductTypes {
   implicit def optionsAreFormat[S](implicit bin : Format[S]) : Format[Option[S]] = new Format[Option[S]]{
     def reads(in : Input) = read[Byte](in) match {
       case 1 => Some(read[S](in));
@@ -17,28 +52,6 @@ trait BasicTypes extends CoreProtocol{
     }
   }
 
-<#list 2..22 as i>
-  <#assign typeName>
-   Tuple${i}[<#list 1..i as j>T${j} <#if i != j>,</#if></#list>]
-  </#assign>
-  implicit def tuple${i}Format[<#list 1..i as j>T${j}<#if i !=j>,</#if></#list>](implicit 
-    <#list 1..i as j>
-      bin${j} : Format[T${j}] <#if i != j>,</#if>
-    </#list>
-    ) : Format[${typeName}] = new Format[${typeName}]{
-      def reads (in : Input) : ${typeName} = ( 
-    <#list 1..i as j>
-        read[T${j}](in)<#if i!=j>,</#if>
-    </#list>
-      )
-    
-      def writes(out : Output, tuple : ${typeName}) = {
-      <#list 1..i as j>
-        write(out, tuple._${j});      
-      </#list>;
-      }
-  }
-</#list>
 }
 
 trait LowPriorityCollectionTypes extends Generic {
@@ -50,7 +63,7 @@ trait LowPriorityCollectionTypes extends Generic {
         builder ++= ts
 		  if(ts.hasNext) sys.error("Builder did not consume all input.") // no lazy builders allowed
         builder.result()
-      } 
+      }
     }
 }
 
@@ -59,7 +72,7 @@ trait CollectionTypes extends BasicTypes with LowPriorityCollectionTypes {
 
   implicit def arrayFormat[T](implicit fmt : Format[T], mf : scala.reflect.Manifest[T]) : Format[Array[T]] = fmt match{
     case ByteFormat => ByteArrayFormat.asInstanceOf[Format[Array[T]]];
-    case _ => 
+    case _ =>
       new CollectionFormat[Array[T], T]{
         def build(length : Int, ts : Iterator[T]) = {
           val result = new Array[T](length);
@@ -68,7 +81,7 @@ trait CollectionTypes extends BasicTypes with LowPriorityCollectionTypes {
         }
         def size(a: Array[T]) = a.length
         def foreach(a: Array[T])(f: T => Unit) = a foreach f
-      } 
+      }
     }
 
   implicit object ByteArrayFormat extends Format[Array[Byte]]{
@@ -76,7 +89,7 @@ trait CollectionTypes extends BasicTypes with LowPriorityCollectionTypes {
       val length = read[Int](in);
       val bytes = new Array[Byte](length);
       in.readFully(bytes);
-      bytes; 
+      bytes;
     }
 
     def writes(out : Output, bytes : Array[Byte]): Unit = {
@@ -85,10 +98,10 @@ trait CollectionTypes extends BasicTypes with LowPriorityCollectionTypes {
     }
   }
 
-  implicit def mutableSetFormat[T](implicit bin : Format[T]) : Format[mutable.Set[T]] = 
+  implicit def mutableSetFormat[T](implicit bin : Format[T]) : Format[mutable.Set[T]] =
     viaSeq((x : Seq[T]) => mutable.Set(x :_*))
 
-  implicit def immutableSetFormat[T](implicit bin : Format[T]) : Format[immutable.Set[T]] = 
+  implicit def immutableSetFormat[T](implicit bin : Format[T]) : Format[immutable.Set[T]] =
     viaSeq((x : Seq[T]) => immutable.Set(x :_*))
 
   implicit def immutableSortedSetFormat[S](implicit ord : Ordering[S], binS : Format[S]) : Format[immutable.SortedSet[S]] = {
@@ -110,8 +123,8 @@ trait CollectionTypes extends BasicTypes with LowPriorityCollectionTypes {
    * the stream termination.
    *
    * This is to ensure proper laziness behaviour - values will be written as they
-   * become available rather than thunking the entire stream up front. 
-   * 
+   * become available rather than thunking the entire stream up front.
+   *
    * Warning! The resulting Stream is not read lazily. If you wish to read a Stream
    * lazily you may consider it to be a sequence of Option[T]s terminated by a None.
    *
@@ -126,7 +139,7 @@ trait CollectionTypes extends BasicTypes with LowPriorityCollectionTypes {
         case None => false;
       })){};
       buffer.toStream;
-    } 
+    }
 
     def writes(out : Output, stream : Stream[S]): Unit = {
       stream.foreach(x => { write[Byte](out, 1); write(out, x); });
